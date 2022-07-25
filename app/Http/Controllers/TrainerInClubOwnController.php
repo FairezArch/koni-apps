@@ -1,0 +1,211 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Club;
+use App\Models\User;
+use App\Models\Nomor;
+use App\Models\Sport;
+use App\Models\Trainner;
+use Illuminate\Http\Request;
+use App\Models\TrainingPlace;
+use App\Models\StatusTrainner;
+use Illuminate\Support\Carbon;
+use Yajra\DataTables\DataTables;
+use App\Models\CertificateProfession;
+use App\Http\Requests\StoreTrainnerRequest;
+use App\Http\Requests\UpdateTrainnerRequest;
+use App\Repository\Trainer\EloquentRepository;
+use App\Repository\User\UserAs\EloquentRepositoryAs;
+
+
+class TrainerInClubOwnController extends Controller
+{
+    protected $trainer;
+    protected $club;
+    protected $user;
+    protected $userAs;
+    protected $originModel;
+
+    public function __construct(EloquentRepository $repository, EloquentRepositoryAs $repositoryAs, Trainner $trainer)
+    {
+        # code...
+        $this->trainer = $repository;
+        $this->club = 'clubs_id';
+        $this->user = 'users_id';
+        $this->userAs = $repositoryAs;
+        $this->originModel = $trainer;
+    }
+
+    public function attrFormat($someFirst, $someSecond)
+    {
+        return $someFirst . '|###|' . $someSecond;
+    }
+
+    /**
+     * Display a listing of the resource.
+     *
+     * @return \Illuminate\Http\Response
+     */
+    public function index(Request $request, Club $club)
+    {
+        //
+        if ($request->ajax()) {
+            $data = Trainner::where($this->club, $club->id)->with(['sports', 'users', 'certificate_professions', 'status_trainners', 'nomor']);
+            return DataTables::of($data)
+                ->addIndexColumn()
+                ->addColumn('name', function (Trainner $row) {
+                    $dateNow = Carbon::now();
+                    $date_born = Carbon::parse($row->users->date_of_birth);
+                    $age = $date_born->diffInYears($dateNow);
+                    return $this->attrFormat($row->users->name, $age . ' Tahun');
+                })
+                ->addColumn('cabor', function (Trainner $row) {
+                    return $this->attrFormat($row->sports->sportbranch_name, $row->nomor->nomor_code);
+                })
+                ->addColumn('trainer_status', function (Trainner $row) {
+                    return $row->status ? 'Aktif' : 'Non Aktif';
+                    // return $row->status_trainners->status_trainner;
+                })
+                ->addColumn('action', function (Trainner $row) {
+                    return $row->id . ',' . $row->clubs_id;
+                })
+                ->rawColumns(['name', 'cabor', 'trainer_status', 'action'])
+                ->make(true);
+        }
+
+        return view('backend.pages.club.trainner.index-trainner', compact('club'));
+    }
+
+    /**
+     * Show the form for creating a new resource.
+     *
+     * @return \Illuminate\Http\Response
+     */
+    public function create(Club $club)
+    {
+        //
+        $nomors = Nomor::all();
+        $status_trainners = StatusTrainner::all();
+        $training_places = TrainingPlace::all();
+        $certificates = CertificateProfession::all();
+
+        return view('backend.pages.club.trainner.add-trainner', compact('club', 'nomors', 'status_trainners', 'certificates'));
+    }
+
+    /**
+     * Store a newly created resource in storage.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\Response
+     */
+    public function store(StoreTrainnerRequest $request, Club $club)
+    {
+        //
+        $request['roleID'] = $this->originModel->TempValue()['roleID'];
+        $request['password'] = $this->originModel->TempValue()['password'];
+        $userID = $this->userAs->storeData($request, []);
+        $setExtraData = [$this->club => $club->id, $this->user => $userID];
+        $save = $this->trainer->storeData($request, $setExtraData);
+
+        if ($save) {
+            $data = [
+                'success' => true,
+                'messages' => "Trainer created successfully"
+            ];
+        } else {
+            $data = [
+                'success' => false,
+                'messages' => "Trainer created unsuccessfully"
+            ];
+        }
+
+        return response()->json($data);
+    }
+
+    /**
+     * Display the specified resource.
+     *
+     * @param  int  $id
+     * @return \Illuminate\Http\Response
+     */
+    public function show($id)
+    {
+        //
+    }
+
+    /**
+     * Show the form for editing the specified resource.
+     *
+     * @param  int  $id
+     * @return \Illuminate\Http\Response
+     */
+    public function edit(Club $club, Trainner $trainer)
+    {
+        //
+        $lists = $trainer->with('users')->find($trainer->id);
+        $nomors = Nomor::all();
+        $status_trainners = StatusTrainner::all();
+        $certificates = CertificateProfession::all();
+        // $support_trainners = SupportTrainner::all();
+        // $training_places = TrainingPlace::all();
+
+        return view('backend.pages.club.trainner.ediy-trainner', compact('club', 'trainer', 'lists', 'sports', 'nomors', 'status_trainners', 'certificates'));
+    }
+
+    /**
+     * Update the specified resource in storage.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @param  int  $id
+     * @return \Illuminate\Http\Response
+     */
+    public function update(UpdateTrainnerRequest $request, Club $club, Trainner $trainer)
+    {
+        //
+        $user = $this->userAs->updateData($request, [], User::findOrFail($request->users_id));
+        $setExtraData = [$this->club => $club->id];
+        $up = $this->trainer->updateData($request, $setExtraData, $trainer);
+
+        if ($up && $user) {
+            $data = [
+                'success' => true,
+                'messages' => "Trainer updated successfully"
+            ];
+        } else {
+            $data = [
+                'success' => false,
+                'messages' => "Trainer updated unsuccessfully"
+            ];
+        }
+
+        return response()->json($data);
+    }
+
+    /**
+     * Remove the specified resource from storage.
+     *
+     * @param  int  $id
+     * @return \Illuminate\Http\Response
+     */
+    public function destroy(Sport $sport_branch, Club $club, Trainner $trainer)
+    {
+        //
+        $user = $this->userAs->deleteData(User::findOrFail($trainer->users_id));
+        $delete = $this->trainer->deleteData($trainer);
+
+        if ($delete && $user) {
+            $data = [
+                'success' => true,
+                'messages' => "Trainner deleted successfully"
+            ];
+        } else {
+            $data = [
+                'success' => false,
+                'messages' => "Trainner deleted unsuccessfully"
+            ];
+        }
+
+        return response()->json($data);
+    }
+}
